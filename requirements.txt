@@ -1,0 +1,12 @@
+# Core computer vision libraries
+opencv-python==4.8.1.78
+mediapipe==0.10.7
+
+# Numerical computing
+numpy==1.24.3
+
+# Data visualization (optional, for development)
+matplotlib==3.7.2
+
+# Additional utilities
+Pillow==10.0.1
