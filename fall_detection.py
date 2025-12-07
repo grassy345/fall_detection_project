@@ -23,7 +23,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/1.mp4")
+    cap = cv2.VideoCapture("stock videos/2.mp4")
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -100,6 +100,98 @@ def get_key_angles(landmarks):
         'left_leg': left_leg_angle,
         'right_leg': right_leg_angle
     }
+
+def update_landmark_history(landmarks, history, max_frames):
+    """Store current frame landmarks and maintain history size"""
+    # Extract key landmark positions (we'll track hip and shoulder centers)
+    left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
+    right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
+    left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
+    right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
+    
+    # Calculate center points
+    hip_center_x = (left_hip.x + right_hip.x) / 2
+    hip_center_y = (left_hip.y + right_hip.y) / 2
+    
+    shoulder_center_x = (left_shoulder.x + right_shoulder.x) / 2
+    shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
+    
+    # Store as dictionary
+    frame_data = {
+        'hip': (hip_center_x, hip_center_y),
+        'shoulder': (shoulder_center_x, shoulder_center_y)
+    }
+    
+    # Add to history
+    history.append(frame_data)
+    
+    # Keep only the last max_frames
+    if len(history) > max_frames:
+        history.pop(0)  # Remove oldest frame
+
+def calculate_velocity(history):
+    """Calculate velocity from landmark history"""
+    if len(history) < 2:
+        return None  # Need at least 2 frames
+    
+    # Get the oldest and newest frames
+    oldest_frame = history[0]
+    newest_frame = history[-1]
+    
+    # Calculate displacement for hip
+    hip_dx = newest_frame['hip'][0] - oldest_frame['hip'][0]
+    hip_dy = newest_frame['hip'][1] - oldest_frame['hip'][1]
+    
+    # Calculate displacement for shoulder
+    shoulder_dx = newest_frame['shoulder'][0] - oldest_frame['shoulder'][0]
+    shoulder_dy = newest_frame['shoulder'][1] - oldest_frame['shoulder'][1]
+    
+    # Calculate speeds (distance moved)
+    hip_speed = np.sqrt(hip_dx**2 + hip_dy**2)
+    shoulder_speed = np.sqrt(shoulder_dx**2 + shoulder_dy**2)
+    
+    # Calculate vertical velocity (downward movement is positive)
+    hip_vertical_velocity = hip_dy  # Positive = moving down
+    shoulder_vertical_velocity = shoulder_dy
+    
+    return {
+        'hip_speed': hip_speed,
+        'shoulder_speed': shoulder_speed,
+        'hip_vertical': hip_vertical_velocity,
+        'shoulder_vertical': shoulder_vertical_velocity,
+        'frames_analyzed': len(history)
+    }
+
+def detect_fall_by_velocity(history):
+    """
+    Detect falls based on movement velocity
+    Returns: (is_fall_detected, fall_reason)
+    """
+    velocities = calculate_velocity(history)
+    
+    if not velocities or velocities['frames_analyzed'] < 5:
+        return False, "Insufficient velocity data"
+    
+    # Define thresholds (these values may need to adjusted according to needed...)
+    SPEED_THRESHOLD = 0.08  # Rapid movement threshold
+    VERTICAL_THRESHOLD = 0.05  # Significant downward movement
+    
+    fall_detected = False
+    reason = ""
+    
+    # Check for rapid overall movement
+    avg_speed = (velocities['hip_speed'] + velocities['shoulder_speed']) / 2
+    if avg_speed > SPEED_THRESHOLD:
+        fall_detected = True
+        reason = f"Rapid movement: {avg_speed:.3f}"
+    
+    # Check for significant downward movement (positive = down)
+    avg_vertical = (velocities['hip_vertical'] + velocities['shoulder_vertical']) / 2
+    if avg_vertical > VERTICAL_THRESHOLD:
+        fall_detected = True
+        reason = f"Downward movement: {avg_vertical:.3f}"
+    
+    return fall_detected, reason
 
 def display_angles_on_frame(frame, angles):
     """Display calculated angles on the frame for debugging"""
@@ -181,13 +273,17 @@ def main():
     
     print("Fall Detection System Started. Press 'q' to quit.")
 
+    # Initialize landmark history for velocity tracking
+    landmark_history = []
+    MAX_HISTORY_FRAMES = 10
+
     # Main camera loop
     while True:
         ret, frame = cap.read()
         
         if not ret:
             # End of video reached, reset to first frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0) 
             continue
         
         # Process frame for pose detection
@@ -198,10 +294,37 @@ def main():
             draw_pose_landmarks(processed_frame, pose_results, mp_drawing, mp_pose)
             angles = get_key_angles(pose_results.pose_landmarks.landmark)
             display_angles_on_frame(processed_frame, angles)
+            update_landmark_history(pose_results.pose_landmarks.landmark, landmark_history, MAX_HISTORY_FRAMES)
+            # velocities = calculate_velocity(landmark_history)
+            # if velocities:
+            #     print(f"Hip speed: {velocities['hip_speed']:.4f}, Vertical: {velocities['hip_vertical']:.4f}")
             
             # Detect fall and display alert/status
-            is_fall, reason = detect_fall_by_angles(angles)
-            display_fall_alert(processed_frame, is_fall, reason)
+            # is_fall, reason = detect_fall_by_angles(angles)
+            # display_fall_alert(processed_frame, is_fall, reason)
+
+            # Detect fall using both algorithms
+            is_fall_angle, reason_angle = detect_fall_by_angles(angles)
+            is_fall_velocity, reason_velocity = detect_fall_by_velocity(landmark_history)
+
+            # Combine results (simple OR logic for now)
+            is_fall = is_fall_angle or is_fall_velocity
+
+            # Collect all reasons
+            reasons = []
+            if is_fall_angle:
+                reasons.append(f"Angle: {reason_angle}")
+            if is_fall_velocity:
+                reasons.append(f"Velocity: {reason_velocity}")
+
+            # Combine reasons into one string
+            combined_reason = " | ".join(reasons) if reasons else "Normal"
+
+            # Display combined result
+            display_fall_alert(processed_frame, is_fall, combined_reason)
+            if is_fall:
+                print(f"Reason: {combined_reason}")
+
         else:
             # If no pose detected, show normal status
             display_fall_alert(processed_frame, False, "No pose detected")
