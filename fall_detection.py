@@ -101,6 +101,38 @@ def get_key_angles(landmarks):
         'right_leg': right_leg_angle
     }
 
+def get_vertical_positions(landmarks):
+    """
+    Extract vertical positions (y-coordinates) of key landmarks for fall detection
+    Returns dictionary with normalized y values (0.0 = top, 1.0 = bottom)
+    """
+    # Get nose landmark (head position)
+    nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE.value]
+    
+    # Get hip landmarks
+    left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
+    right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
+    
+    # Calculate hip center y-coordinate
+    hip_center_y = (left_hip.y + right_hip.y) / 2
+    
+    # Get shoulder landmarks (for optional use)
+    left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
+    right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
+    shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
+    
+    # Get knee landmarks (for optional use)
+    left_knee = landmarks[mp.solutions.pose.PoseLandmark.LEFT_KNEE.value]
+    right_knee = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_KNEE.value]
+    knee_center_y = (left_knee.y + right_knee.y) / 2
+    
+    return {
+        'nose_y': nose.y,
+        'hip_y': hip_center_y,
+        'shoulder_y': shoulder_center_y,
+        'knee_y': knee_center_y
+    }
+
 def update_landmark_history(landmarks, history, max_frames):
     """Store current frame landmarks and maintain history size"""
     # Extract key landmark positions (we'll track hip and shoulder centers)
@@ -193,6 +225,38 @@ def detect_fall_by_velocity(history):
     
     return fall_detected, reason
 
+def detect_fall_by_position(positions):
+    """
+    Detect falls based on vertical position (proximity to ground)
+    Returns: (is_fall_detected, fall_reason)
+    """
+    if not positions:
+        return False, "No position data"
+    
+    # Define thresholds (normalized coordinates: 0.0 = top, 1.0 = bottom)
+    HEAD_LOW_THRESHOLD = 0.70   # Head in bottom 30% of frame
+    HIP_LOW_THRESHOLD = 0.75    # Hip in bottom 25% of frame
+    
+    fall_detected = False
+    reason = ""
+    
+    # Check if head is too low (person's head near ground)
+    if positions['nose_y'] > HEAD_LOW_THRESHOLD:
+        fall_detected = True
+        reason = f"Head too low: {positions['nose_y']:.3f}"
+    
+    # Check if hip is too low (person's body near ground)
+    if positions['hip_y'] > HIP_LOW_THRESHOLD:
+        fall_detected = True
+        reason = f"Hip too low: {positions['hip_y']:.3f}"
+    
+    # Optional: Check if both are low (stronger indicator)
+    if positions['nose_y'] > HEAD_LOW_THRESHOLD and positions['hip_y'] > HIP_LOW_THRESHOLD:
+        fall_detected = True
+        reason = f"Body on ground: Nose {positions['nose_y']:.3f}, Hip {positions['hip_y']:.3f}"
+    
+    return fall_detected, reason
+
 def display_angles_on_frame(frame, angles):
     """Display calculated angles on the frame for debugging"""
     if angles:
@@ -208,6 +272,22 @@ def display_angles_on_frame(frame, angles):
         
         cv2.putText(frame, f"Right Leg: {angles['right_leg']:.1f} deg", 
                    (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+def display_positions_on_frame(frame, positions):
+    """Display vertical positions on the frame for debugging"""
+    if positions:
+        y_offset = 130  # Start below the angles display
+        cv2.putText(frame, f"Nose Y: {positions['nose_y']:.3f}", 
+                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        cv2.putText(frame, f"Hip Y: {positions['hip_y']:.3f}", 
+                   (10, y_offset + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        cv2.putText(frame, f"Shoulder Y: {positions['shoulder_y']:.3f}", 
+                   (10, y_offset + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        cv2.putText(frame, f"Knee Y: {positions['knee_y']:.3f}", 
+                   (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
 def detect_fall_by_angles(angles):
     """
@@ -294,6 +374,16 @@ def main():
             draw_pose_landmarks(processed_frame, pose_results, mp_drawing, mp_pose)
             angles = get_key_angles(pose_results.pose_landmarks.landmark)
             display_angles_on_frame(processed_frame, angles)
+
+            # Add this in the main loop where you process pose results
+            positions = get_vertical_positions(pose_results.pose_landmarks.landmark)
+            display_positions_on_frame(processed_frame, positions)
+            # print(f"Positions - Nose: {positions['nose_y']:.3f}, Hip: {positions['hip_y']:.3f}")
+
+            # Test the position detection
+            # is_fall_position, reason_position = detect_fall_by_position(positions)
+            # print(f"Position Detection - Fall: {is_fall_position}, Reason: {reason_position}")
+
             update_landmark_history(pose_results.pose_landmarks.landmark, landmark_history, MAX_HISTORY_FRAMES)
             # velocities = calculate_velocity(landmark_history)
             # if velocities:
@@ -306,9 +396,10 @@ def main():
             # Detect fall using both algorithms
             is_fall_angle, reason_angle = detect_fall_by_angles(angles)
             is_fall_velocity, reason_velocity = detect_fall_by_velocity(landmark_history)
+            is_fall_position, reason_position = detect_fall_by_position(positions)
 
             # Combine results (simple OR logic for now)
-            is_fall = is_fall_angle or is_fall_velocity
+            is_fall = is_fall_angle or is_fall_velocity or is_fall_position
 
             # Collect all reasons
             reasons = []
@@ -316,6 +407,8 @@ def main():
                 reasons.append(f"Angle: {reason_angle}")
             if is_fall_velocity:
                 reasons.append(f"Velocity: {reason_velocity}")
+            if is_fall_position:
+                reasons.append(f"Position: {reason_position}")
 
             # Combine reasons into one string
             combined_reason = " | ".join(reasons) if reasons else "Normal"
