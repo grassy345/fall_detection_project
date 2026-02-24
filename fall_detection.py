@@ -23,7 +23,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/2.mp4")
+    cap = cv2.VideoCapture("stock videos/sinan/07_rotated_resized.mp4")
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -101,37 +101,37 @@ def get_key_angles(landmarks):
         'right_leg': right_leg_angle
     }
 
-def get_vertical_positions(landmarks):
-    """
-    Extract vertical positions (y-coordinates) of key landmarks for fall detection
-    Returns dictionary with normalized y values (0.0 = top, 1.0 = bottom)
-    """
-    # Get nose landmark (head position)
-    nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE.value]
+# def get_vertical_positions(landmarks):
+#     """
+#     Extract vertical positions (y-coordinates) of key landmarks for fall detection
+#     Returns dictionary with normalized y values (0.0 = top, 1.0 = bottom)
+#     """
+#     # Get nose landmark (head position)
+#     nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE.value]
     
-    # Get hip landmarks
-    left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
-    right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
+#     # Get hip landmarks
+#     left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
+#     right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
     
-    # Calculate hip center y-coordinate
-    hip_center_y = (left_hip.y + right_hip.y) / 2
+#     # Calculate hip center y-coordinate
+#     hip_center_y = (left_hip.y + right_hip.y) / 2
     
-    # Get shoulder landmarks (for optional use)
-    left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
-    right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
-    shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
+#     # Get shoulder landmarks (for optional use)
+#     left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
+#     right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
+#     shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
     
-    # Get knee landmarks (for optional use)
-    left_knee = landmarks[mp.solutions.pose.PoseLandmark.LEFT_KNEE.value]
-    right_knee = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_KNEE.value]
-    knee_center_y = (left_knee.y + right_knee.y) / 2
+#     # Get knee landmarks (for optional use)
+#     left_knee = landmarks[mp.solutions.pose.PoseLandmark.LEFT_KNEE.value]
+#     right_knee = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_KNEE.value]
+#     knee_center_y = (left_knee.y + right_knee.y) / 2
     
-    return {
-        'nose_y': nose.y,
-        'hip_y': hip_center_y,
-        'shoulder_y': shoulder_center_y,
-        'knee_y': knee_center_y
-    }
+#     return {
+#         'nose_y': nose.y,
+#         'hip_y': hip_center_y,
+#         'shoulder_y': shoulder_center_y,
+#         'knee_y': knee_center_y
+#     }
 
 def update_landmark_history(landmarks, history, max_frames):
     """Store current frame landmarks and maintain history size"""
@@ -225,37 +225,125 @@ def detect_fall_by_velocity(history):
     
     return fall_detected, reason
 
-def detect_fall_by_position(positions):
+def detect_fall_by_position(landmarks):
     """
-    Detect falls based on vertical position (proximity to ground)
-    Returns: (is_fall_detected, fall_reason)
+    Detect falls based on body orientation (vertical vs horizontal)
+    
+    Key insight: 
+    - Standing/sitting: Body is VERTICAL (shoulder-hip line is vertical)
+    - Lying down: Body is HORIZONTAL (shoulder-hip line is horizontal)
+    
+    This works regardless of position in frame, camera angle, or body posture.
     """
-    if not positions:
-        return False, "No position data"
+    # Get shoulder and hip landmarks
+    left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
+    right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
+    left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
+    right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
     
-    # Define thresholds (normalized coordinates: 0.0 = top, 1.0 = bottom)
-    HEAD_LOW_THRESHOLD = 0.70   # Head in bottom 30% of frame
-    HIP_LOW_THRESHOLD = 0.75    # Hip in bottom 25% of frame
+    # Calculate center points
+    shoulder_center_x = (left_shoulder.x + right_shoulder.x) / 2
+    shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
+    hip_center_x = (left_hip.x + right_hip.x) / 2
+    hip_center_y = (left_hip.y + right_hip.y) / 2
     
-    fall_detected = False
+    # Calculate the vertical span (how much vertical distance between shoulders and hips)
+    vertical_distance = abs(shoulder_center_y - hip_center_y)
+    
+    # Calculate the horizontal span (how much horizontal distance between shoulders and hips)
+    horizontal_distance = abs(shoulder_center_x - hip_center_x)
+    
+    # Calculate body orientation angle
+    # When standing: vertical_distance is large, horizontal_distance is small
+    # When lying down: vertical_distance is small, horizontal_distance is large
+    
+    # Avoid division by zero
+    if vertical_distance < 0.001:
+        vertical_distance = 0.001
+    
+    # Aspect ratio: horizontal / vertical
+    # Standing: ratio ~0.0-0.3 (mostly vertical)
+    # Lying down: ratio ~1.0+ (mostly horizontal)
+    orientation_ratio = horizontal_distance / vertical_distance
+    
+    # Thresholds
+    HORIZONTAL_THRESHOLD = 0.8  # If ratio > 0.6, body is too horizontal
+    # VERTICAL_SPAN_THRESHOLD = 0.15  # If vertical span < 0.15, body is compressed/horizontal
+
+    # --- NEW: Full-body bounding box aspect ratio ---
+    all_x = [lm.x for lm in landmarks]
+    all_y = [lm.y for lm in landmarks]
+    bbox_width = max(all_x) - min(all_x)
+    bbox_height = max(all_y) - min(all_y)
+
+    if bbox_height < 0.001:
+        bbox_height = 0.001
+
+    bbox_ratio = bbox_width / bbox_height
+    BBOX_THRESHOLD = 1.2  # Body wider than tall = likely fallen
+
+    # --- Decision: either signal can trigger ---
+    is_horizontal = orientation_ratio > HORIZONTAL_THRESHOLD
+    is_wide_bbox = bbox_ratio > BBOX_THRESHOLD
+    # body_is_low = hip_center_y > 0.60  # hips in lower portion of frame
+    
+    fall_detected = (is_horizontal or is_wide_bbox)
     reason = ""
     
-    # Check if head is too low (person's head near ground)
-    if positions['nose_y'] > HEAD_LOW_THRESHOLD:
-        fall_detected = True
-        reason = f"Head too low: {positions['nose_y']:.3f}"
+    # Check 1: Body orientation (horizontal vs vertical)
+    if fall_detected:
+        reason = f"Horizontal body | Orientation: {orientation_ratio:.3f} | BBox: {bbox_ratio:.3f}"
+    else:
+        reason = f"Vertical body | Orientation: {orientation_ratio:.3f} | BBox: {bbox_ratio:.3f}"
     
-    # Check if hip is too low (person's body near ground)
-    if positions['hip_y'] > HIP_LOW_THRESHOLD:
-        fall_detected = True
-        reason = f"Hip too low: {positions['hip_y']:.3f}"
-    
-    # Optional: Check if both are low (stronger indicator)
-    if positions['nose_y'] > HEAD_LOW_THRESHOLD and positions['hip_y'] > HIP_LOW_THRESHOLD:
-        fall_detected = True
-        reason = f"Body on ground: Nose {positions['nose_y']:.3f}, Hip {positions['hip_y']:.3f}"
+    # Check 2: Vertical span too small (body lying flat)
+    # if vertical_distance < VERTICAL_SPAN_THRESHOLD:
+    #     fall_detected = True
+    #     reason = f"Minimal vertical span: {vertical_distance:.3f}"
     
     return fall_detected, reason
+
+def calculate_fall_confidence(is_fall_angle, is_fall_velocity, is_fall_position):
+    """
+    Calculate confidence score for fall detection using weighted algorithm
+    
+    Weighting:
+    - Position: 50% (most definitive indicator)
+    - Angle: 25% (can have false positives from bending)
+    - Velocity: 25% (can have false positives from quick movements)
+    
+    Returns: (confidence_percentage, confidence_level, active_detectors)
+    """
+    # Define weights (must sum to 100)
+    POSITION_WEIGHT = 50
+    ANGLE_WEIGHT = 25
+    VELOCITY_WEIGHT = 25
+    
+    # Calculate confidence score
+    confidence = 0
+    active_detectors = []
+    
+    if is_fall_position:
+        confidence += POSITION_WEIGHT
+        active_detectors.append("Position")
+    
+    if is_fall_angle:
+        confidence += ANGLE_WEIGHT
+        active_detectors.append("Angle")
+    
+    if is_fall_velocity:
+        confidence += VELOCITY_WEIGHT
+        active_detectors.append("Velocity")
+    
+    # Determine confidence level based on thresholds
+    if confidence >= 61:
+        confidence_level = "FALL_DETECTED"
+    elif confidence >= 31:
+        confidence_level = "SUSPICIOUS"
+    else:
+        confidence_level = "NORMAL"
+    
+    return confidence, confidence_level, active_detectors
 
 def display_angles_on_frame(frame, angles):
     """Display calculated angles on the frame for debugging"""
@@ -273,21 +361,21 @@ def display_angles_on_frame(frame, angles):
         cv2.putText(frame, f"Right Leg: {angles['right_leg']:.1f} deg", 
                    (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
-def display_positions_on_frame(frame, positions):
-    """Display vertical positions on the frame for debugging"""
-    if positions:
-        y_offset = 130  # Start below the angles display
-        cv2.putText(frame, f"Nose Y: {positions['nose_y']:.3f}", 
-                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+# def display_positions_on_frame(frame, positions):
+#     """Display vertical positions on the frame for debugging"""
+#     if positions:
+#         y_offset = 130  # Start below the angles display
+#         cv2.putText(frame, f"Nose Y: {positions['nose_y']:.3f}", 
+#                    (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
-        cv2.putText(frame, f"Hip Y: {positions['hip_y']:.3f}", 
-                   (10, y_offset + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+#         cv2.putText(frame, f"Hip Y: {positions['hip_y']:.3f}", 
+#                    (10, y_offset + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
-        cv2.putText(frame, f"Shoulder Y: {positions['shoulder_y']:.3f}", 
-                   (10, y_offset + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+#         cv2.putText(frame, f"Shoulder Y: {positions['shoulder_y']:.3f}", 
+#                    (10, y_offset + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
-        cv2.putText(frame, f"Knee Y: {positions['knee_y']:.3f}", 
-                   (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+#         cv2.putText(frame, f"Knee Y: {positions['knee_y']:.3f}", 
+#                    (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
 def detect_fall_by_angles(angles):
     """
@@ -327,19 +415,38 @@ def detect_fall_by_angles(angles):
     
     return fall_detected, reason
 
-def display_fall_alert(frame, is_fall, reason):
-    """Display fall alert or normal status at the bottom of the frame"""
+def display_fall_alert(frame, confidence, confidence_level, reason):
+    """
+    Display fall alert with confidence scoring
+    - Green: Normal (0-30%)
+    - Yellow: Suspicious (31-60%)
+    - Red: Fall Detected (61-100%)
+    """
     y_base = frame.shape[0] - 60
-    if is_fall:
-        # Red text at the bottom
-        cv2.putText(frame, "FALL DETECTED!", (10, y_base),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-        cv2.putText(frame, reason, (10, y_base + 35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    
+    if confidence_level == "FALL_DETECTED":
+        # Red alert - Fall detected
+        cv2.putText(frame, f"FALL DETECTED! (Confidence: {confidence}%)", 
+                   (10, y_base),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+        cv2.putText(frame, reason, 
+                   (10, y_base + 35),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    
+    elif confidence_level == "SUSPICIOUS":
+        # Yellow warning - Suspicious activity
+        cv2.putText(frame, f"SUSPICIOUS ACTIVITY (Confidence: {confidence}%)", 
+                   (10, y_base),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 3)
+        cv2.putText(frame, reason, 
+                   (10, y_base + 35),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    
     else:
-        # Green status at the bottom
-        cv2.putText(frame, "Status: Normal", (10, frame.shape[0] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        # Green status - Normal
+        cv2.putText(frame, f"Status: Normal (Confidence: {confidence}%)", 
+                   (10, frame.shape[0] - 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
 def main():
     """Main program loop"""
@@ -372,12 +479,13 @@ def main():
         # Draw pose landmarks if detected
         if pose_results.pose_landmarks:
             draw_pose_landmarks(processed_frame, pose_results, mp_drawing, mp_pose)
+            
             angles = get_key_angles(pose_results.pose_landmarks.landmark)
             display_angles_on_frame(processed_frame, angles)
 
             # Add this in the main loop where you process pose results
-            positions = get_vertical_positions(pose_results.pose_landmarks.landmark)
-            display_positions_on_frame(processed_frame, positions)
+            # positions = get_vertical_positions(pose_results.pose_landmarks.landmark)
+            # display_positions_on_frame(processed_frame, positions)
             # print(f"Positions - Nose: {positions['nose_y']:.3f}, Hip: {positions['hip_y']:.3f}")
 
             # Test the position detection
@@ -396,12 +504,14 @@ def main():
             # Detect fall using both algorithms
             is_fall_angle, reason_angle = detect_fall_by_angles(angles)
             is_fall_velocity, reason_velocity = detect_fall_by_velocity(landmark_history)
-            is_fall_position, reason_position = detect_fall_by_position(positions)
+            is_fall_position, reason_position = detect_fall_by_position(pose_results.pose_landmarks.landmark)
 
-            # Combine results (simple OR logic for now)
-            is_fall = is_fall_angle or is_fall_velocity or is_fall_position
+            # Calculate confidence score
+            confidence, confidence_level, active_detectors = calculate_fall_confidence(
+                is_fall_angle, is_fall_velocity, is_fall_position
+            )
 
-            # Collect all reasons
+            # Collect all reasons from active detectors
             reasons = []
             if is_fall_angle:
                 reasons.append(f"Angle: {reason_angle}")
@@ -411,16 +521,24 @@ def main():
                 reasons.append(f"Position: {reason_position}")
 
             # Combine reasons into one string
-            combined_reason = " | ".join(reasons) if reasons else "Normal"
+            combined_reason = " | ".join(reasons) if reasons else "No anomalies detected"
 
-            # Display combined result
-            display_fall_alert(processed_frame, is_fall, combined_reason)
-            if is_fall:
-                print(f"Reason: {combined_reason}")
+            # Display result with confidence scoring
+            display_fall_alert(processed_frame, confidence, confidence_level, combined_reason)
+
+            # Console output for monitoring
+            if confidence_level == "FALL_DETECTED":
+                print(f"🚨 FALL DETECTED! - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
+                print(f"   Reason: {combined_reason}")
+                print(f"   >>> SEND CRITICAL ALERT NOTIFICATION <<<")
+            elif confidence_level == "SUSPICIOUS":
+                print(f"⚠️  SUSPICIOUS ACTIVITY - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
+                print(f"   Reason: {combined_reason}")
+                print(f"   >>> SEND WARNING NOTIFICATION <<<")
 
         else:
             # If no pose detected, show normal status
-            display_fall_alert(processed_frame, False, "No pose detected")
+            display_fall_alert(processed_frame, 0, "NORMAL", "No pose detected")
 
         # Concatenate original and processed frames horizontally
         combined = np.hstack((frame, processed_frame))
