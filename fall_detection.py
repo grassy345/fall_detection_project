@@ -4,6 +4,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import time
 
 def initialize_mediapipe():
     """Initialize MediaPipe pose detection"""
@@ -23,7 +24,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/sinan/07_rotated_resized.mp4")
+    cap = cv2.VideoCapture("stock videos/sinan/14_rotated_resized.mp4")
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -464,6 +465,22 @@ def main():
     landmark_history = []
     MAX_HISTORY_FRAMES = 10
 
+    # Time-window buffer for temporal smoothing
+    confidence_window = []
+    WINDOW_DURATION_SECONDS = 2
+    FPS = 30  # match your video FPS
+    # If we want to set FPS value dynamically 
+    # (commented out because might not work in some cases where metadata is missing)
+    # FPS = int(cap.get(cv2.CAP_PROP_FPS))
+    WINDOW_SIZE = WINDOW_DURATION_SECONDS * FPS  # = 60 frames
+
+    current_window_level = "NORMAL"
+    consecutive_suspicious_count = 0
+    last_notification_time = None
+    last_suspicious_count_time = None
+    FALL_NOTIFICATION_COOLDOWN = 120  # seconds
+    SUSPICIOUS_NOTIFICATION_COOLDOWN = 60  # seconds
+
     # Main camera loop
     while True:
         ret, frame = cap.read()
@@ -511,6 +528,58 @@ def main():
                 is_fall_angle, is_fall_velocity, is_fall_position
             )
 
+            # Store confidence score in time-window buffer
+            confidence_window.append(confidence)
+
+            # Keep buffer trimmed to window size
+            if len(confidence_window) > WINDOW_SIZE:
+                confidence_window.pop(0)
+
+            # Evaluate every frame once buffer is full
+            if len(confidence_window) == WINDOW_SIZE:
+                # Count frames where fall was detected in the last 2 seconds
+                fall_frame_count = sum(1 for c in confidence_window if c >= 61)
+                suspicious_frame_count = sum(1 for c in confidence_window if 31 <= c <= 60)
+                
+                # Calculate ratio of fall/suspicious frames in the window
+                fall_ratio = fall_frame_count / len(confidence_window)
+                suspicious_ratio = suspicious_frame_count / len(confidence_window)
+
+                # Determine current window level
+                if fall_ratio >= 0.5:
+                    current_window_level = "FALL_DETECTED"
+                elif suspicious_ratio >= 0.5:
+                    current_window_level = "SUSPICIOUS"
+                else:
+                    current_window_level = "NORMAL"
+                
+                print(f"[Rolling Window] Fall ratio: {fall_ratio:.2f} | Suspicious ratio: {suspicious_ratio:.2f} → {current_window_level}")
+                
+                # Escalation logic
+                current_time = time.time()
+
+                if current_window_level == "FALL_DETECTED":
+                    consecutive_suspicious_count = 0  # reset
+                    # Check if fall notification cooldown has expired
+                    if last_notification_time is None or (current_time - last_notification_time) >= FALL_NOTIFICATION_COOLDOWN:
+                        last_notification_time = current_time
+                        print("🚨 REAL FALL CONFIRMED - SEND FALL NOTIFICATION")
+                
+                elif current_window_level == "SUSPICIOUS":
+                    if last_suspicious_count_time is None or (current_time - last_suspicious_count_time) >= WINDOW_DURATION_SECONDS:
+                        last_suspicious_count_time = current_time
+                        consecutive_suspicious_count += 1
+                        print(f"Suspicious count: {consecutive_suspicious_count}/2")
+                        if consecutive_suspicious_count >= 2:
+                            consecutive_suspicious_count = 0  # reset after triggering
+                            # Check if suspicious notification cooldown has expired
+                            if last_notification_time is None or (current_time - last_notification_time) >= SUSPICIOUS_NOTIFICATION_COOLDOWN:
+                                last_notification_time = current_time
+                                print("⚠️ SUSTAINED SUSPICIOUS ACTIVITY - SEND WARNING NOTIFICATION")
+                
+                else:  # NORMAL
+                    consecutive_suspicious_count = 0  # reset on normal
+
             # Collect all reasons from active detectors
             reasons = []
             if is_fall_angle:
@@ -526,15 +595,15 @@ def main():
             # Display result with confidence scoring
             display_fall_alert(processed_frame, confidence, confidence_level, combined_reason)
 
-            # Console output for monitoring
-            if confidence_level == "FALL_DETECTED":
-                print(f"🚨 FALL DETECTED! - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
-                print(f"   Reason: {combined_reason}")
-                print(f"   >>> SEND CRITICAL ALERT NOTIFICATION <<<")
-            elif confidence_level == "SUSPICIOUS":
-                print(f"⚠️  SUSPICIOUS ACTIVITY - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
-                print(f"   Reason: {combined_reason}")
-                print(f"   >>> SEND WARNING NOTIFICATION <<<")
+            # # Console output for monitoring
+            # if confidence_level == "FALL_DETECTED":
+            #     print(f"🚨 FALL DETECTED! - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
+            #     print(f"   Reason: {combined_reason}")
+            #     print(f"   >>> SEND CRITICAL ALERT NOTIFICATION <<<")
+            # elif confidence_level == "SUSPICIOUS":
+            #     print(f"⚠️  SUSPICIOUS ACTIVITY - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
+            #     print(f"   Reason: {combined_reason}")
+            #     print(f"   >>> SEND WARNING NOTIFICATION <<<")
 
         else:
             # If no pose detected, show normal status
