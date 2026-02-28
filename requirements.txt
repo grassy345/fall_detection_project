@@ -1,6 +1,7 @@
 # Core computer vision libraries
 opencv-python==4.8.1.78
-mediapipe==0.10.7
+mediapipe==0.10.21
+# Previously used mediapipe version: v0.10.7 (deprecated now)
 
 # Numerical computing
 numpy==1.24.3

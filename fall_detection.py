@@ -6,6 +6,8 @@ import mediapipe as mp
 import numpy as np
 import time
 
+STATUS_FILE = "status.txt"
+
 def initialize_mediapipe():
     """Initialize MediaPipe pose detection"""
     mp_pose = mp.solutions.pose
@@ -24,7 +26,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/sinan/14_rotated_resized.mp4")
+    cap = cv2.VideoCapture("stock videos/sinan/10_rotated_resized.mp4")
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -451,7 +453,13 @@ def display_fall_alert(frame, confidence, confidence_level, reason):
 
 def main():
     """Main program loop"""
-    # Initialize everything
+
+    # Initialize status file
+    with open(STATUS_FILE, "w") as f:
+        f.write("NORMAL")
+    print("Status file initialized!")
+
+    # Initialize everything else
     pose, mp_drawing, mp_pose = initialize_mediapipe()
     cap = setup_camera()
     
@@ -481,8 +489,26 @@ def main():
     FALL_NOTIFICATION_COOLDOWN = 120  # seconds
     SUSPICIOUS_NOTIFICATION_COOLDOWN = 60  # seconds
 
+    waiting_for_ack = False          # True when a FALL/SUSPICIOUS alert is active
+    ACK_CHECK_INTERVAL = 2           # seconds between status.txt checks for ACKNOWLEDGED
+    last_ack_check_time = None       # throttle the ack polling
+
     # Main camera loop
     while True:
+
+        if waiting_for_ack:
+            current_time = time.time()
+            if last_ack_check_time is None or (current_time - last_ack_check_time) >= ACK_CHECK_INTERVAL:
+                last_ack_check_time = current_time
+                with open(STATUS_FILE, "r") as f:
+                    ack_status = f.read().strip()
+                if ack_status == "ACKNOWLEDGED":
+                    print("✅ Acknowledgement received! Resuming normal monitoring.")
+                    last_notification_time = None   # reset cooldown — ready for fresh alerts
+                    waiting_for_ack = False
+                    with open(STATUS_FILE, "w") as f:
+                        f.write("NORMAL")           # hand control back to normal flow
+
         ret, frame = cap.read()
         
         if not ret:
@@ -536,7 +562,7 @@ def main():
                 confidence_window.pop(0)
 
             # Evaluate every frame once buffer is full
-            if len(confidence_window) == WINDOW_SIZE:
+            if len(confidence_window) == WINDOW_SIZE and not waiting_for_ack:
                 # Count frames where fall was detected in the last 2 seconds
                 fall_frame_count = sum(1 for c in confidence_window if c >= 61)
                 suspicious_frame_count = sum(1 for c in confidence_window if 31 <= c <= 60)
@@ -564,6 +590,9 @@ def main():
                     if last_notification_time is None or (current_time - last_notification_time) >= FALL_NOTIFICATION_COOLDOWN:
                         last_notification_time = current_time
                         print("🚨 REAL FALL CONFIRMED - SEND FALL NOTIFICATION")
+                        with open(STATUS_FILE, "w") as f:
+                            f.write("FALL_DETECTED")
+                        waiting_for_ack = True
                 
                 elif current_window_level == "SUSPICIOUS":
                     if last_suspicious_count_time is None or (current_time - last_suspicious_count_time) >= WINDOW_DURATION_SECONDS:
@@ -576,9 +605,14 @@ def main():
                             if last_notification_time is None or (current_time - last_notification_time) >= SUSPICIOUS_NOTIFICATION_COOLDOWN:
                                 last_notification_time = current_time
                                 print("⚠️ SUSTAINED SUSPICIOUS ACTIVITY - SEND WARNING NOTIFICATION")
+                                with open(STATUS_FILE, "w") as f:
+                                    f.write("SUSPICIOUS")
+                                waiting_for_ack = True
                 
                 else:  # NORMAL
                     consecutive_suspicious_count = 0  # reset on normal
+                    with open(STATUS_FILE, "w") as f:
+                        f.write("NORMAL")
 
             # Collect all reasons from active detectors
             reasons = []

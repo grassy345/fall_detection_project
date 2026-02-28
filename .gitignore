@@ -36,3 +36,16 @@ Thumbs.db
 
 # Local virtual environment
 fall_detection_env/
+firebase_admin_venv/
+
+# Backup files
+*.bak
+
+# Stock video folder
+stock videos/
+
+# Firebase API Key
+serviceAccountKey.json
+
+# Buffer status file
+status.txt
