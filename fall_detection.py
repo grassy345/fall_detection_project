@@ -26,7 +26,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/sinan/10_rotated_resized.mp4")
+    cap = cv2.VideoCapture("stock videos/sinan/10_rotated_resized_vg.mp4") # Ignore filename modifications made in this line
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -103,38 +103,6 @@ def get_key_angles(landmarks):
         'left_leg': left_leg_angle,
         'right_leg': right_leg_angle
     }
-
-# def get_vertical_positions(landmarks):
-#     """
-#     Extract vertical positions (y-coordinates) of key landmarks for fall detection
-#     Returns dictionary with normalized y values (0.0 = top, 1.0 = bottom)
-#     """
-#     # Get nose landmark (head position)
-#     nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE.value]
-    
-#     # Get hip landmarks
-#     left_hip = landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value]
-#     right_hip = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value]
-    
-#     # Calculate hip center y-coordinate
-#     hip_center_y = (left_hip.y + right_hip.y) / 2
-    
-#     # Get shoulder landmarks (for optional use)
-#     left_shoulder = landmarks[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER.value]
-#     right_shoulder = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER.value]
-#     shoulder_center_y = (left_shoulder.y + right_shoulder.y) / 2
-    
-#     # Get knee landmarks (for optional use)
-#     left_knee = landmarks[mp.solutions.pose.PoseLandmark.LEFT_KNEE.value]
-#     right_knee = landmarks[mp.solutions.pose.PoseLandmark.RIGHT_KNEE.value]
-#     knee_center_y = (left_knee.y + right_knee.y) / 2
-    
-#     return {
-#         'nose_y': nose.y,
-#         'hip_y': hip_center_y,
-#         'shoulder_y': shoulder_center_y,
-#         'knee_y': knee_center_y
-#     }
 
 def update_landmark_history(landmarks, history, max_frames):
     """Store current frame landmarks and maintain history size"""
@@ -271,7 +239,6 @@ def detect_fall_by_position(landmarks):
     
     # Thresholds
     HORIZONTAL_THRESHOLD = 0.8  # If ratio > 0.6, body is too horizontal
-    # VERTICAL_SPAN_THRESHOLD = 0.15  # If vertical span < 0.15, body is compressed/horizontal
 
     # --- NEW: Full-body bounding box aspect ratio ---
     all_x = [lm.x for lm in landmarks]
@@ -288,7 +255,6 @@ def detect_fall_by_position(landmarks):
     # --- Decision: either signal can trigger ---
     is_horizontal = orientation_ratio > HORIZONTAL_THRESHOLD
     is_wide_bbox = bbox_ratio > BBOX_THRESHOLD
-    # body_is_low = hip_center_y > 0.60  # hips in lower portion of frame
     
     fall_detected = (is_horizontal or is_wide_bbox)
     reason = ""
@@ -298,11 +264,6 @@ def detect_fall_by_position(landmarks):
         reason = f"Horizontal body | Orientation: {orientation_ratio:.3f} | BBox: {bbox_ratio:.3f}"
     else:
         reason = f"Vertical body | Orientation: {orientation_ratio:.3f} | BBox: {bbox_ratio:.3f}"
-    
-    # Check 2: Vertical span too small (body lying flat)
-    # if vertical_distance < VERTICAL_SPAN_THRESHOLD:
-    #     fall_detected = True
-    #     reason = f"Minimal vertical span: {vertical_distance:.3f}"
     
     return fall_detected, reason
 
@@ -324,19 +285,15 @@ def calculate_fall_confidence(is_fall_angle, is_fall_velocity, is_fall_position)
     
     # Calculate confidence score
     confidence = 0
-    active_detectors = []
     
     if is_fall_position:
         confidence += POSITION_WEIGHT
-        active_detectors.append("Position")
     
     if is_fall_angle:
         confidence += ANGLE_WEIGHT
-        active_detectors.append("Angle")
-    
+
     if is_fall_velocity:
         confidence += VELOCITY_WEIGHT
-        active_detectors.append("Velocity")
     
     # Determine confidence level based on thresholds
     if confidence >= 61:
@@ -346,7 +303,7 @@ def calculate_fall_confidence(is_fall_angle, is_fall_velocity, is_fall_position)
     else:
         confidence_level = "NORMAL"
     
-    return confidence, confidence_level, active_detectors
+    return confidence, confidence_level
 
 def display_angles_on_frame(frame, angles):
     """Display calculated angles on the frame for debugging"""
@@ -363,22 +320,6 @@ def display_angles_on_frame(frame, angles):
         
         cv2.putText(frame, f"Right Leg: {angles['right_leg']:.1f} deg", 
                    (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        
-# def display_positions_on_frame(frame, positions):
-#     """Display vertical positions on the frame for debugging"""
-#     if positions:
-#         y_offset = 130  # Start below the angles display
-#         cv2.putText(frame, f"Nose Y: {positions['nose_y']:.3f}", 
-#                    (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-        
-#         cv2.putText(frame, f"Hip Y: {positions['hip_y']:.3f}", 
-#                    (10, y_offset + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-        
-#         cv2.putText(frame, f"Shoulder Y: {positions['shoulder_y']:.3f}", 
-#                    (10, y_offset + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-        
-#         cv2.putText(frame, f"Knee Y: {positions['knee_y']:.3f}", 
-#                    (10, y_offset + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
 def detect_fall_by_angles(angles):
     """
@@ -526,23 +467,7 @@ def main():
             angles = get_key_angles(pose_results.pose_landmarks.landmark)
             display_angles_on_frame(processed_frame, angles)
 
-            # Add this in the main loop where you process pose results
-            # positions = get_vertical_positions(pose_results.pose_landmarks.landmark)
-            # display_positions_on_frame(processed_frame, positions)
-            # print(f"Positions - Nose: {positions['nose_y']:.3f}, Hip: {positions['hip_y']:.3f}")
-
-            # Test the position detection
-            # is_fall_position, reason_position = detect_fall_by_position(positions)
-            # print(f"Position Detection - Fall: {is_fall_position}, Reason: {reason_position}")
-
             update_landmark_history(pose_results.pose_landmarks.landmark, landmark_history, MAX_HISTORY_FRAMES)
-            # velocities = calculate_velocity(landmark_history)
-            # if velocities:
-            #     print(f"Hip speed: {velocities['hip_speed']:.4f}, Vertical: {velocities['hip_vertical']:.4f}")
-            
-            # Detect fall and display alert/status
-            # is_fall, reason = detect_fall_by_angles(angles)
-            # display_fall_alert(processed_frame, is_fall, reason)
 
             # Detect fall using both algorithms
             is_fall_angle, reason_angle = detect_fall_by_angles(angles)
@@ -550,7 +475,7 @@ def main():
             is_fall_position, reason_position = detect_fall_by_position(pose_results.pose_landmarks.landmark)
 
             # Calculate confidence score
-            confidence, confidence_level, active_detectors = calculate_fall_confidence(
+            confidence, confidence_level = calculate_fall_confidence(
                 is_fall_angle, is_fall_velocity, is_fall_position
             )
 
@@ -628,16 +553,6 @@ def main():
 
             # Display result with confidence scoring
             display_fall_alert(processed_frame, confidence, confidence_level, combined_reason)
-
-            # # Console output for monitoring
-            # if confidence_level == "FALL_DETECTED":
-            #     print(f"🚨 FALL DETECTED! - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
-            #     print(f"   Reason: {combined_reason}")
-            #     print(f"   >>> SEND CRITICAL ALERT NOTIFICATION <<<")
-            # elif confidence_level == "SUSPICIOUS":
-            #     print(f"⚠️  SUSPICIOUS ACTIVITY - Confidence: {confidence}% - Detectors: {', '.join(active_detectors)}")
-            #     print(f"   Reason: {combined_reason}")
-            #     print(f"   >>> SEND WARNING NOTIFICATION <<<")
 
         else:
             # If no pose detected, show normal status

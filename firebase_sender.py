@@ -41,7 +41,7 @@ def write_status_file(status):
 def send_to_firebase(status):
     """Write fall_status, timestamp, and acknowledged to /fall_alert atomically."""
     ref = db.reference("fall_alert")
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = time.strftime("%d-%m-%Y %H:%M:%S")
     ref.update({
         "fall_status": status,
         "timestamp": timestamp,
