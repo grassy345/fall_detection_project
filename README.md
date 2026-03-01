@@ -74,7 +74,7 @@ fall-detection-system/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/grassy345/fall-detection-system.git
+git clone https://github.com/grassy345/fall_detection_project
 cd fall-detection-system
 ```
 
@@ -221,7 +221,7 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ## Contact
 
-For questions or suggestions, please open an issue on [GitHub](https://github.com/grassy345/fall-detection-system/issues).
+For questions or suggestions, please open an issue on [GitHub](https://github.com/grassy345/fall_detection_project/issues).
 
 ---
 
