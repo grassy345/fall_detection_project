@@ -57,7 +57,7 @@ fall_detection.py resumes monitoring
 ## Project Structure
 
 ```
-fall-detection-system/
+fall_detection_project/
 ├── fall_detection.py       # Main fall detection application (mediapipe_env)
 ├── firebase_sender.py      # Firebase bridge script (firebase_admin_venv)
 ├── launcher.py             # Launches both scripts with their respective environments
@@ -75,7 +75,7 @@ fall-detection-system/
 
 ```bash
 git clone https://github.com/grassy345/fall_detection_project
-cd fall-detection-system
+cd fall_detection_project
 ```
 
 ### 2. Set Up the Fall Detection Environment
