@@ -172,14 +172,14 @@ v4l2-ctl --list-devices  # verify camera is visible
 
 ## Current Status
 
-✅ Real-time pose detection and skeleton visualization
-✅ Multi-algorithm fall confidence scoring
-✅ Temporal smoothing with rolling confidence window
-✅ Tiered alert system (SUSPICIOUS / FALL_DETECTED)
-✅ Firebase Realtime Database integration
-✅ Caregiver acknowledgement flow
-✅ Dual-process launcher with graceful shutdown
-✅ FallGuard Android companion app
+- [x] Real-time pose detection and skeleton visualization
+- [x] Multi-algorithm fall confidence scoring
+- [x] Temporal smoothing with rolling confidence window
+- [x] Tiered alert system (SUSPICIOUS / FALL_DETECTED)
+- [x] Firebase Realtime Database integration
+- [x] Caregiver acknowledgement flow
+- [x] Dual-process launcher with graceful shutdown
+- [x] FallGuard Android companion app
 
 ## Troubleshooting
 
