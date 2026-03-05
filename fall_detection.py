@@ -5,6 +5,8 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import time
+from collections import deque
+import threading
 
 STATUS_FILE = "status.txt"
 
@@ -26,7 +28,7 @@ def initialize_mediapipe():
 
 def setup_camera():
     """Initialize camera capture"""
-    cap = cv2.VideoCapture("stock videos/sinan/10_rotated_resized_vg.mp4") # Ignore filename modifications made in this line
+    cap = cv2.VideoCapture("stock videos/sinan/03_rotated_resized_vg.mp4") # Ignore filename modifications made in this line
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -391,6 +393,16 @@ def display_fall_alert(frame, confidence, confidence_level, reason):
         cv2.putText(frame, f"Status: Normal (Confidence: {confidence}%)", 
                    (10, frame.shape[0] - 20),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+def save_clip(pre_frames, post_frames, output_file, fps, width, height):
+    """Write pre-fall and post-fall frames to an mp4 file on a background thread."""
+    all_frames = list(pre_frames) + post_frames
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+    for f in all_frames:
+        out.write(f)
+    out.release()
+    print(f"[Clip] Saved {len(all_frames)} frames → {output_file}")
 
 def main():
     """Main program loop"""
@@ -434,6 +446,24 @@ def main():
     ACK_CHECK_INTERVAL = 2           # seconds between status.txt checks for ACKNOWLEDGED
     last_ack_check_time = None       # throttle the ack polling
 
+    # ── Circular frame buffer for clip recording ─────────────────────────
+    PRE_FALL_SECONDS = 3
+    POST_FALL_SECONDS = 3
+    # Read actual FPS and resolution from camera after it opens
+    actual_fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    actual_fps = int(actual_fps)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    PRE_FALL_BUFFER_SIZE = PRE_FALL_SECONDS * actual_fps
+
+    frame_buffer = deque(maxlen=PRE_FALL_BUFFER_SIZE)  # auto-discards oldest frames
+    pre_fall_snapshot = []
+    post_fall_frames = []        # collects frames after detection
+    recording_post_fall = False  # flag: currently collecting post-fall footage
+    post_fall_collected = 0      # how many post-fall frames collected so far
+    POST_FALL_TARGET = POST_FALL_SECONDS * actual_fps
+    CLIP_OUTPUT_FILE = "fall_clip.mp4"
+
     # Main camera loop
     while True:
 
@@ -456,6 +486,25 @@ def main():
             # End of video reached, reset to first frame
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0) 
             continue
+
+        frame_buffer.append(frame.copy())
+        # ── Post-fall frame collection ────────────────────────────────────────
+        if recording_post_fall:
+            post_fall_frames.append(frame.copy())
+            post_fall_collected += 1
+            if post_fall_collected >= POST_FALL_TARGET:
+                recording_post_fall = False
+                # Snapshot the buffer at this moment and hand off to background thread
+                clip_pre = list(frame_buffer)
+                clip_post = post_fall_frames.copy()
+                post_fall_frames.clear()
+                post_fall_collected = 0
+                threading.Thread(
+                    target=save_clip,
+                    args=(pre_fall_snapshot, clip_post, CLIP_OUTPUT_FILE, actual_fps, frame_width, frame_height),
+                    daemon=True
+                ).start()
+                print("[Clip] Background thread started for video saving.")
         
         # Process frame for pose detection
         processed_frame, pose_results = process_frame(frame, pose)
@@ -518,6 +567,10 @@ def main():
                         with open(STATUS_FILE, "w") as f:
                             f.write("FALL_DETECTED")
                         waiting_for_ack = True
+                        pre_fall_snapshot = list(frame_buffer)  # ← snapshot NOW before buffer keeps rolling
+                        recording_post_fall = True
+                        post_fall_frames.clear()
+                        post_fall_collected = 0
                 
                 elif current_window_level == "SUSPICIOUS":
                     if last_suspicious_count_time is None or (current_time - last_suspicious_count_time) >= WINDOW_DURATION_SECONDS:
@@ -533,6 +586,9 @@ def main():
                                 with open(STATUS_FILE, "w") as f:
                                     f.write("SUSPICIOUS")
                                 waiting_for_ack = True
+                                recording_post_fall = True
+                                post_fall_frames.clear()
+                                post_fall_collected = 0
                 
                 else:  # NORMAL
                     consecutive_suspicious_count = 0  # reset on normal

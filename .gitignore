@@ -49,3 +49,9 @@ serviceAccountKey.json
 
 # Buffer status file
 status.txt
+
+# API Keys
+.env
+
+# Buffer video file
+fall_clip*.mp4
