@@ -36,6 +36,7 @@ fall_detection.py resumes monitoring
 - Tiered alert system — SUSPICIOUS activity and confirmed FALL_DETECTED
 - Notification cooldown to prevent alert spam
 - Firebase Realtime Database integration for instant caregiver notification
+- Fall clip recording — 3 seconds before and after the fall, uploaded to Cloudinary
 - Caregiver acknowledgement flow via FallGuard Android app
 - Dual-process architecture with inter-process communication via status.txt
 - Single launcher script to start the entire system
@@ -46,11 +47,19 @@ fall_detection.py resumes monitoring
 
 🔗 [https://github.com/grassy345/FallGuard](https://github.com/grassy345/FallGuard)
 
+## Design Scope
+
+This system is intentionally designed for **single-occupant monitoring environments**. The primary use case is monitoring one elderly individual in their home — a context where multi-person detection is unnecessary and would impose a significant computational overhead without practical benefit.
+
+Multi-person detection was evaluated during development but ruled out as the pose estimation workload for multiple simultaneous subjects is prohibitive on standard consumer hardware, and falls outside the intended deployment scenario of individual elderly home care.
+
 ## Prerequisites
 
 - Python 3.7 or higher
 - Webcam or USB camera
 - Firebase project with Realtime Database enabled
+- Cloudinary account (free tier) for fall clip storage
+- ffmpeg installed on the system (`sudo apt install ffmpeg` on Ubuntu/WSL)
 - FallGuard Android app installed on caregiver's device
 - For WSL users: USB camera forwarding setup (see below)
 
@@ -58,12 +67,13 @@ fall_detection.py resumes monitoring
 
 ```
 fall_detection_project/
-├── fall_detection.py       # Main fall detection application (mediapipe_env)
-├── firebase_sender.py      # Firebase bridge script (firebase_admin_venv)
+├── fall_detection.py       # Main fall detection application (fall_detection_env)
+├── firebase_sender.py      # Firebase bridge and Cloudinary upload script (firebase_admin_venv)
 ├── launcher.py             # Launches both scripts with their respective environments
 ├── test_camera.py          # Camera testing utility
 ├── requirements.txt        # Python dependencies for fall_detection_env
 ├── serviceAccountKey.json  # Firebase service account key (not tracked in git)
+├── cloudinary.env          # Cloudinary credentials (not tracked in git)
 ├── status.txt              # Inter-process communication bridge (not tracked in git)
 ├── README.md               # This file
 └── .gitignore              # Git ignore rules
@@ -94,7 +104,7 @@ A separate virtual environment is required due to a protobuf version conflict be
 ```bash
 python3 -m venv firebase_admin_venv
 source firebase_admin_venv/bin/activate
-pip install firebase-admin
+pip install firebase-admin cloudinary python-dotenv
 deactivate
 ```
 
@@ -109,18 +119,38 @@ deactivate
 {
   "fall_status": "NORMAL",
   "timestamp": "DD-MM-YYYY HH:MM:SS",
-  "acknowledged": false
+  "acknowledged": false,
+  "clip_url": ""
 }
 ```
 
-### 5. Test Camera Setup
+### 5. Configure Cloudinary
+
+1. Create a free account at [cloudinary.com](https://cloudinary.com)
+2. From the Dashboard, note your **Cloud Name**, **API Key**, and **API Secret**
+3. Go to **Settings → Upload → Upload Presets** and create an unsigned preset named `fall_detection_preset`
+4. Create a `cloudinary.env` file in the project root:
+
+```
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+```
+
+### 6. Install ffmpeg
+
+```bash
+sudo apt install ffmpeg   # Ubuntu / WSL
+```
+
+### 7. Test Camera Setup
 
 ```bash
 source fall_detection_env/bin/activate
 python test_camera.py
 ```
 
-### 6. Run the System
+### 8. Run the System
 
 ```bash
 python3 launcher.py
@@ -138,12 +168,14 @@ This single command starts both `fall_detection.py` and `firebase_sender.py` usi
 5. If ≥50% of frames in the window are fall-confidence, status escalates to `FALL_DETECTED`
 6. If ≥50% of frames are suspicious-confidence and this occurs twice consecutively, status escalates to `SUSPICIOUS`
 7. Status is written to `status.txt` and the escalation block freezes until the caregiver acknowledges
+8. A circular frame buffer continuously stores the last 3 seconds of footage — on alert trigger, pre-fall footage is snapshotted and 3 seconds of post-fall footage is recorded, then stitched into `fall_clip.mp4` on a background thread
 
 ### Firebase Bridge (`firebase_sender.py`)
 1. Polls `status.txt` every 1 second for status changes
 2. On `FALL_DETECTED` or `SUSPICIOUS` — writes `fall_status`, `timestamp`, and `acknowledged: false` atomically to Firebase `/fall_alert`
-3. Switches to polling Firebase `acknowledged` field every 2 seconds
-4. When `acknowledged` turns `true` — writes `ACKNOWLEDGED` to `status.txt` and resets Firebase to `fall_status: NORMAL, acknowledged: false`
+3. Waits for `fall_clip.mp4` to finish writing, re-encodes it to H.264 using ffmpeg, uploads to Cloudinary, and updates `clip_url` in Firebase
+4. Switches to polling Firebase `acknowledged` field every 2 seconds
+5. When `acknowledged` turns `true` — writes `ACKNOWLEDGED` to `status.txt` and resets Firebase to `fall_status: NORMAL, acknowledged: false`
 
 ### Launcher (`launcher.py`)
 1. Verifies both Python interpreters exist before starting
@@ -177,6 +209,9 @@ v4l2-ctl --list-devices  # verify camera is visible
 - [x] Temporal smoothing with rolling confidence window
 - [x] Tiered alert system (SUSPICIOUS / FALL_DETECTED)
 - [x] Firebase Realtime Database integration
+- [x] Fall clip recording with pre and post fall footage
+- [x] H.264 re-encoding via ffmpeg for universal playback
+- [x] Cloudinary upload with clip URL delivered to FallGuard via Firebase
 - [x] Caregiver acknowledgement flow
 - [x] Dual-process launcher with graceful shutdown
 - [x] FallGuard Android companion app
@@ -193,6 +228,11 @@ v4l2-ctl --list-devices  # verify camera is visible
 - Check that the Database URL in `firebase_sender.py` matches your Firebase project
 - Ensure Realtime Database rules allow read/write access
 
+### Cloudinary Upload Failing
+- Verify `cloudinary.env` is present in the project root with correct credentials
+- Ensure the upload preset name matches exactly — `fall_detection_preset`
+- Check that ffmpeg is installed (`ffmpeg -version`)
+
 ### Performance Issues
 - Lower the camera resolution in `setup_camera()`
 - Close other applications using the camera or GPU
@@ -206,8 +246,8 @@ v4l2-ctl --list-devices  # verify camera is visible
 - Follow PEP 8 style guidelines
 - Add docstrings to all functions
 - Test camera before committing using `test_camera.py`
-- Never commit `serviceAccountKey.json` or `status.txt` — both are in `.gitignore`
-- Keep fall detection logic in `fall_detection_env` and Firebase logic in `firebase_admin_venv`
+- Never commit `serviceAccountKey.json`, `cloudinary.env`, or `status.txt` — all are in `.gitignore`
+- Keep fall detection logic in `fall_detection_env` and Firebase/Cloudinary logic in `firebase_admin_venv`
 
 ## License
 
@@ -218,6 +258,7 @@ This project is open source and available under the [MIT License](LICENSE).
 - MediaPipe team for the pose estimation framework
 - OpenCV community for computer vision tools
 - Firebase team for the Realtime Database SDK
+- Cloudinary for free-tier video hosting
 
 ## Contact
 
@@ -225,4 +266,4 @@ For questions or suggestions, please open an issue on [GitHub](https://github.co
 
 ---
 
-**Note**: This is a college major project focused on computer vision and IoT concepts. The system is designed for educational purposes and should not be used as the sole monitoring solution for elderly care without proper testing and clinical validation.
+**Note**: This is a college major project focused on computer vision and IoT concepts. The system is intentionally scoped for single-occupant monitoring environments and is designed for educational purposes. It should not be used as the sole monitoring solution for elderly care without proper testing and clinical validation.
