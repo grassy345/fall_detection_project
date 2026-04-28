@@ -75,12 +75,14 @@ def upload_clip_to_cloudinary(filepath):
 
     # Upload to Cloudinary
     try:
+        timestamp_str = time.strftime("%d%m%Y_%H%M%S")
         print("[Cloudinary] Uploading clip...")
         result = cloudinary.uploader.upload(
             encoded_path,
             resource_type = "video",
-            public_id     = "fall_clips/fall_clip",
-            overwrite     = True,
+            asset_folder   = "fall_clips",            # ← explicit folder parameter
+            public_id      = f"fall_{timestamp_str}", # ← timestamped, e.g. fall_12032026_143022
+            overwrite     = False,
             preset        = CLOUDINARY_PRESET
         )
         url = result.get("secure_url")
