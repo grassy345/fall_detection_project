@@ -1,5 +1,8 @@
 # Elderly Fall Detection System
 
+> [!WARNING]
+> Some of the dependency packages used in this project (such as specific versions of `mediapipe`, `opencv-python`, etc.) may be outdated. You may need to update the dependencies in `requirements.txt` to the latest versions and make corresponding changes to the codebase to accommodate any API changes.
+
 A computer vision-based fall detection system using MediaPipe and OpenCV for real-time monitoring of elderly individuals. The system analyzes pose landmarks and movement patterns to detect potential falls and instantly notifies caregivers via the **FallGuard Android app** through Firebase Realtime Database.
 
 ## System Architecture
@@ -31,12 +34,15 @@ fall_detection.py resumes monitoring
 ## Features
 
 - Real-time pose detection using MediaPipe
-- Multi-algorithm fall detection using joint angles, body velocity, and vertical position
+- Multi-algorithm fall detection using joint angles (including specific torso/leg tracking and asymmetry), body velocity, and vertical position (including full-body bounding box aspect ratio)
+- Live on-screen video feed with side-by-side display (Original vs Processed), real-time skeleton overlay, and confidence status alerts
 - Temporal smoothing with a rolling confidence window to reduce false positives
 - Tiered alert system — SUSPICIOUS activity and confirmed FALL_DETECTED
 - Notification cooldown to prevent alert spam
 - Firebase Realtime Database integration for instant caregiver notification
 - Fall clip recording — 3 seconds before and after the fall, uploaded to Cloudinary
+- Graceful video upload fallback (uploads raw .mp4 directly to Cloudinary if H.264 ffmpeg re-encoding fails)
+- Automated stale clip cleanup at startup
 - Caregiver acknowledgement flow via FallGuard Android app
 - Dual-process architecture with inter-process communication via status.txt
 - Single launcher script to start the entire system
@@ -163,19 +169,21 @@ This single command starts both `fall_detection.py` and `firebase_sender.py` usi
 ### Fall Detection (`fall_detection.py`)
 1. Captures live video from webcam using OpenCV
 2. Runs MediaPipe pose estimation to extract 33 body landmarks per frame
-3. Calculates a confidence score every frame using three independent detectors — joint angles, body velocity, and vertical position
+3. Calculates a confidence score every frame using three independent detectors — joint angles (torso/legs and asymmetry), body velocity, and vertical position (including full-body bounding box aspect ratio)
 4. Scores are accumulated in a 2-second rolling window (60 frames at 30 FPS)
 5. If ≥50% of frames in the window are fall-confidence, status escalates to `FALL_DETECTED`
 6. If ≥50% of frames are suspicious-confidence and this occurs twice consecutively, status escalates to `SUSPICIOUS`
 7. Status is written to `status.txt` and the escalation block freezes until the caregiver acknowledges
 8. A circular frame buffer continuously stores the last 3 seconds of footage — on alert trigger, pre-fall footage is snapshotted and 3 seconds of post-fall footage is recorded, then stitched into `fall_clip.mp4` on a background thread
+9. Displays a live side-by-side feed (Original vs Processed) with skeleton overlays, calculated angles, and real-time alerts.
 
 ### Firebase Bridge (`firebase_sender.py`)
-1. Polls `status.txt` every 1 second for status changes
-2. On `FALL_DETECTED` or `SUSPICIOUS` — writes `fall_status`, `timestamp`, and `acknowledged: false` atomically to Firebase `/fall_alert`
-3. Waits for `fall_clip.mp4` to finish writing, re-encodes it to H.264 using ffmpeg, uploads to Cloudinary, and updates `clip_url` in Firebase
-4. Switches to polling Firebase `acknowledged` field every 2 seconds
-5. When `acknowledged` turns `true` — writes `ACKNOWLEDGED` to `status.txt` and resets Firebase to `fall_status: NORMAL, acknowledged: false`
+1. Clears any stale fall clip from previous sessions at startup
+2. Polls `status.txt` every 1 second for status changes
+3. On `FALL_DETECTED` or `SUSPICIOUS` — writes `fall_status`, `timestamp`, and `acknowledged: false` atomically to Firebase `/fall_alert`
+4. Waits for `fall_clip.mp4` to finish writing, re-encodes it to H.264 using ffmpeg (with a graceful fallback to raw mp4 upload if encoding fails), uploads to Cloudinary, and updates `clip_url` in Firebase
+5. Switches to polling Firebase `acknowledged` field every 2 seconds
+6. When `acknowledged` turns `true` — writes `ACKNOWLEDGED` to `status.txt` and resets Firebase to `fall_status: NORMAL, acknowledged: false`
 
 ### Launcher (`launcher.py`)
 1. Verifies both Python interpreters exist before starting
