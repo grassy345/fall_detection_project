@@ -47,6 +47,29 @@ fall_detection.py resumes monitoring
 - Dual-process architecture with inter-process communication via status.txt
 - Single launcher script to start the entire system
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/images/normal.png" width="640" alt="Normal State"><br>
+      <sub><b>Normal Monitoring State</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/suspicious.png" width="640" alt="Suspicious Activity"><br>
+      <sub><b>Suspicious Activity Escalation</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/fall.png" width="640" alt="Fall Detected"><br>
+      <sub><b>Fall Detected Alarm Trigger</b></sub>
+    </td>
+  </tr>
+</table>
+
 ## Related Repository
 
 **FallGuard** — The companion Android app for caregivers. Receives fall alerts in real time, triggers an alarm, and allows the caregiver to acknowledge the alert.
